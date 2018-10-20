@@ -8,12 +8,13 @@ from collections import deque
 import matplotlib.pyplot as plt
 import serial
 
-CMD_OFF = b'O'
-CMD_ACTIVE = b'A'
 CMD_TRIGGERED = b'T'
+CMD_ACTIVE = b'A'
+CMD_OFF = b'O'
 
-alarm_ready = True
 alarm_active = False
+alarm_triggered = False
+system_available = False
 
 dataset_path_prefix = os.getcwd() + '/controller/software/datasets/'
 
@@ -25,10 +26,13 @@ net = cv2.dnn.readNetFromCaffe(dataset_path_prefix + 'MobileNetSSD_deploy.protot
 video_capture = cv2.VideoCapture(0)
 
 count = 0
-    
-ser = serial.Serial("/dev/cu.usbmodem143220", 9600)
 
-ser.write(CMD_ACTIVE)
+try:
+    ser = serial.Serial("/dev/cu.usbmodem141240", 9600)
+    system_available = True
+    ser.write(CMD_ACTIVE)
+except:
+    print("Warning: Alarm alert system not available")
 
 while True:
     _, frame = video_capture.read()
@@ -42,16 +46,9 @@ while True:
     objects = []
 
     for i in np.arange(0, detections.shape[2]):
-        # extract the confidence (i.e., probability) associated with the
-        # prediction
         confidence = detections[0, 0, i, 2]
 
-        # filter out weak detections by ensuring the `confidence` is
-        # greater than the minimum confidence
         if confidence > 0.75:
-            # extract the index of the class label from the `detections`,
-            # then compute the (x, y)-coordinates of the bounding box for
-            # the object
             index = int(detections[0, 0, i, 1])
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             (startX, startY, endX, endY) = box.astype("int")
@@ -66,26 +63,37 @@ while True:
             cv2.rectangle(frame, (startX, startY), (endX, endY),COLORS[index], 2)
             cv2.putText(frame, label, (startX, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLORS[index], 2)
 
-    if "person" in objects and alarm_ready and not alarm_active:
-        ser.write(CMD_TRIGGERED)
-        alarm_active = True
-    elif "person" not in objects and alarm_ready and alarm_active:
-        ser.write(CMD_ACTIVE)
-        alarm_active = False
+    if "person" in objects and alarm_active and not alarm_triggered:
+        if system_available:
+            ser.write(CMD_TRIGGERED)
+        alarm_triggered = True
+    elif "person" not in objects and alarm_active and alarm_triggered:
+        if system_available:
+            ser.write(CMD_ACTIVE)
+        alarm_triggered = False
 
-        
-    if alarm_active:
-        cv2.putText(frame, "Alarm Triggered", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
-    elif alarm_ready:
-        cv2.putText(frame, "Alarm Ready", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
+    if alarm_triggered:
+        cv2.putText(frame, "Alarm triggered", (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
+    elif alarm_active:
+        cv2.putText(frame, "Alarm active", (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
     else:
-        cv2.putText(frame, "Alarm Off", (10, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 2)
+        cv2.putText(frame, "Alarm off", (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 2)
 
     cv2.imshow("Output", frame)
 
-    if cv2.waitKey(1)== ord("q") & 0xFF:
+    keypress = cv2.waitKey(1)
+    if keypress == ord(" ") & 0xFF:
+        alarm_active = not alarm_active
+        if system_available and alarm_active:
+            ser.write(CMD_ACTIVE)
+        elif system_available and not alarm_active:
+            ser.write(CMD_OFF)
+    elif keypress ==  ord("q") & 0xFF:
         break
 
-ser.write(CMD_OFF)
+
+if system_available:
+    ser.write(CMD_OFF)
+
 video_capture.release()
 cv2.destroyAllWindows()
